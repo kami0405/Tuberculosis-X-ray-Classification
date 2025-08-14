@@ -17,39 +17,35 @@ model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
 model.to(device)
 model.eval()
 
-# --- Image preprocessing (match training exactly) ---
+# --- Image preprocessing ---
 transform = transforms.Compose([
-    transforms.Resize((224, 224)),         # same size used in training
+    transforms.Resize((224, 224)),
     transforms.ToTensor(),
-    transforms.Normalize(
-        mean=[0.485, 0.456, 0.406],       # same normalization as training
-        std=[0.229, 0.224, 0.225]
-    )
+    transforms.Normalize([0.485, 0.456, 0.406],
+                         [0.229, 0.224, 0.225])
 ])
 
 def load_image(image):
-    # Convert image to RGB and apply training preprocessing
     image = image.convert('RGB')
     image = transform(image).unsqueeze(0)  # add batch dimension
     return image.to(device)
 
-# --- Prediction function with threshold ---
-def predict(image, threshold=0.5):
+# --- Prediction function with fixed 0.7 threshold ---
+THRESHOLD = 0.7
+
+def predict(image):
     image = load_image(image)
     with torch.no_grad():
         outputs = model(image)
         probs = torch.softmax(outputs, dim=1)
-        pred_class_idx = outputs.argmax(1).item()
-
-    classes = ['Normal', 'Tuberculosis']
-    pred_prob = probs[0][pred_class_idx].item()
-
-    # Apply threshold: if TB probability < threshold, classify as Normal
-    if pred_class_idx == 1 and pred_prob < threshold:
-        pred_class_idx = 0
-        pred_prob = probs[0][0].item()
-
-    return classes[pred_class_idx], pred_prob
+        prob_TB = probs[0][1].item()  # probability of TB class
+    
+    if prob_TB >= THRESHOLD:
+        pred_class = "Tuberculosis"
+    else:
+        pred_class = "Normal"
+    
+    return pred_class, prob_TB
 
 # --- Streamlit UI ---
 st.title("💻 TB Chest X-ray Detector")
@@ -60,10 +56,7 @@ uploaded_file = st.file_uploader("Choose an X-ray image...", type=["jpg", "png",
 if uploaded_file is not None:
     image = Image.open(uploaded_file)
     st.image(image, caption='Uploaded Image', use_container_width=True)
-
-    # Optional: adjust threshold for more conservative TB detection
-    threshold = st.slider("TB Probability Threshold", 0.0, 1.0, 0.7, 0.01)
-
-    pred_class, confidence = predict(image, threshold=threshold)
+    
+    pred_class, confidence = predict(image)
     st.write(f"**Prediction:** {pred_class}")
     st.write(f"**Confidence:** {confidence:.4f}")
