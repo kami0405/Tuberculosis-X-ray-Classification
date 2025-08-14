@@ -12,6 +12,7 @@ device = torch.device("cpu")  # change to "cuda" if GPU available
 model = models.densenet121(pretrained=False)
 num_features = model.classifier.in_features
 model.classifier = torch.nn.Linear(num_features, 2)  # 2 classes: Normal, TB
+
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "tb_detector_densenet121.pth")
 model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
 model.to(device)
@@ -30,16 +31,22 @@ def load_image(image):
     image = transform(image).unsqueeze(0)  # add batch dimension
     return image.to(device)
 
+# --- Class mapping ---
+class_to_idx = {'Normal': 0, 'Tuberculosis': 1}
+idx_to_class = [None] * len(class_to_idx)
+for k, v in class_to_idx.items():
+    idx_to_class[v] = k
+
 # --- Prediction function ---
 def predict(image):
     image = load_image(image)
     with torch.no_grad():
         outputs = model(image)
         probs = torch.softmax(outputs, dim=1)
-        pred_class = outputs.argmax(1).item()
+        pred_class_idx = outputs.argmax(1).item()
     
-    classes = ['Normal', 'Tuberculosis']
-    return classes[pred_class], probs[0][pred_class].item()
+    pred_class = idx_to_class[pred_class_idx]
+    return pred_class, probs[0][pred_class_idx].item()
 
 # --- Streamlit UI ---
 st.title("💻 TB Chest X-ray Detector")
@@ -51,7 +58,6 @@ if uploaded_file is not None:
     image = Image.open(uploaded_file)
     st.image(image, caption='Uploaded Image', use_container_width=True)
 
-    
     pred_class, confidence = predict(image)
     st.write(f"**Prediction:** {pred_class}")
     st.write(f"**Confidence:** {confidence:.4f}")
