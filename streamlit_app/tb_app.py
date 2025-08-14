@@ -17,38 +17,39 @@ model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
 model.to(device)
 model.eval()
 
-# --- Image preprocessing (match training) ---
+# --- Image preprocessing (match training exactly) ---
 transform = transforms.Compose([
-    transforms.Resize((224, 224)),           # resize exactly as in training
-    transforms.ToTensor(),                   # convert to tensor
-    transforms.Normalize([0.485, 0.456, 0.406],  # mean from training
-                         [0.229, 0.224, 0.225])  # std from training
+    transforms.Resize((224, 224)),         # same size used in training
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],       # same normalization as training
+        std=[0.229, 0.224, 0.225]
+    )
 ])
 
 def load_image(image):
-    image = image.convert('RGB')             # ensure RGB
-    image = transform(image).unsqueeze(0)    # add batch dimension
+    # Convert image to RGB and apply training preprocessing
+    image = image.convert('RGB')
+    image = transform(image).unsqueeze(0)  # add batch dimension
     return image.to(device)
 
 # --- Prediction function with threshold ---
-CONFIDENCE_THRESHOLD = 0.8  # adjust to reduce false positives
-
-def predict(image):
+def predict(image, threshold=0.5):
     image = load_image(image)
     with torch.no_grad():
         outputs = model(image)
         probs = torch.softmax(outputs, dim=1)
-        pred_class_index = outputs.argmax(1).item()
-        pred_confidence = probs[0][pred_class_index].item()
+        pred_class_idx = outputs.argmax(1).item()
 
     classes = ['Normal', 'Tuberculosis']
-    
-    # Apply threshold
-    if pred_class_index == 1 and pred_confidence < CONFIDENCE_THRESHOLD:
-        pred_class_index = 0
-        pred_confidence = 1 - pred_confidence  # adjust confidence
+    pred_prob = probs[0][pred_class_idx].item()
 
-    return classes[pred_class_index], pred_confidence
+    # Apply threshold: if TB probability < threshold, classify as Normal
+    if pred_class_idx == 1 and pred_prob < threshold:
+        pred_class_idx = 0
+        pred_prob = probs[0][0].item()
+
+    return classes[pred_class_idx], pred_prob
 
 # --- Streamlit UI ---
 st.title("💻 TB Chest X-ray Detector")
@@ -59,7 +60,10 @@ uploaded_file = st.file_uploader("Choose an X-ray image...", type=["jpg", "png",
 if uploaded_file is not None:
     image = Image.open(uploaded_file)
     st.image(image, caption='Uploaded Image', use_container_width=True)
-    
-    pred_class, confidence = predict(image)
+
+    # Optional: adjust threshold for more conservative TB detection
+    threshold = st.slider("TB Probability Threshold", 0.0, 1.0, 0.7, 0.01)
+
+    pred_class, confidence = predict(image, threshold=threshold)
     st.write(f"**Prediction:** {pred_class}")
     st.write(f"**Confidence:** {confidence:.4f}")
