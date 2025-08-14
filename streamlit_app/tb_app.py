@@ -4,6 +4,7 @@ import streamlit as st
 import torch
 from torchvision import models, transforms
 from PIL import Image
+import torch.nn.functional as F
 
 # --- Device ---
 device = torch.device("cpu")  # change to "cuda" if GPU available
@@ -18,50 +19,44 @@ model.to(device)
 model.eval()
 
 # --- Image preprocessing ---
-transform = transforms.Compose([
+base_transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406],
                          [0.229, 0.224, 0.225])
 ])
 
+# Test-Time Augmentation: flips + rotations
+def tta_transforms(image):
+    aug_images = [image, image.transpose(Image.FLIP_LEFT_RIGHT), image.transpose(Image.FLIP_TOP_BOTTOM)]
+    return [base_transform(img).unsqueeze(0).to(device) for img in aug_images]
+
 def load_image(image):
     image = image.convert('RGB')
-    image = transform(image).unsqueeze(0)  # add batch dimension
-    return image.to(device)
+    return base_transform(image).unsqueeze(0).to(device)
 
-# --- Prediction function ---
+# --- Prediction function with temperature scaling & TTA ---
+TEMPERATURE = 2.0  # adjust this (higher = softer probabilities)
+
 def predict(image):
-    image = load_image(image)
-    with torch.no_grad():
-        outputs = model(image)
-        probs = torch.softmax(outputs, dim=1)
-        pred_class = outputs.argmax(1).item()
-    
-    classes = ['Normal', 'Tuberculosis']
-    return classes[pred_class], probs[0][pred_class].item()
+    tta_images = tta_transforms(image)
+    outputs = []
 
-# --- Prediction with threshold ---
-def predict_with_threshold(image, threshold=0.5):
-    pred_class, confidence = predict(image)
-    # Override to Normal if confidence is below threshold for TB
-    if pred_class == "Tuberculosis" and confidence < threshold:
-        pred_class = "Normal"
-    return pred_class, confidence
+    with torch.no_grad():
+        for img in tta_images:
+            logits = model(img)
+            probs = F.softmax(logits / TEMPERATURE, dim=1)
+            outputs.append(probs)
+    
+    avg_probs = torch.mean(torch.cat(outputs, dim=0), dim=0)
+    pred_class = torch.argmax(avg_probs).item()
+
+    classes = ['Normal', 'Tuberculosis']
+    return classes[pred_class], avg_probs[pred_class].item()
 
 # --- Streamlit UI ---
 st.title("💻 TB Chest X-ray Detector")
 st.write("Upload a chest X-ray image and get a prediction for Tuberculosis.")
-
-# --- Confidence threshold slider ---
-threshold = st.slider(
-    "TB Confidence Threshold",
-    min_value=0.0,
-    max_value=1.0,
-    value=0.5,
-    step=0.01,
-    help="Only predict Tuberculosis if probability is above this threshold"
-)
 
 uploaded_file = st.file_uploader("Choose an X-ray image...", type=["jpg", "png", "jpeg"])
 
@@ -69,6 +64,6 @@ if uploaded_file is not None:
     image = Image.open(uploaded_file)
     st.image(image, caption='Uploaded Image', use_container_width=True)
 
-    pred_class, confidence = predict_with_threshold(image, threshold)
+    pred_class, confidence = predict(image)
     st.write(f"**Prediction:** {pred_class}")
     st.write(f"**Confidence:** {confidence:.4f}")
