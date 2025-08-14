@@ -1,0 +1,54 @@
+# tb_app.py
+import streamlit as st
+import torch
+from torchvision import models, transforms
+from PIL import Image
+
+# --- Device ---
+device = torch.device("cpu")  # change to "cuda" if GPU available
+
+# --- Load model architecture and trained weights ---
+model = models.densenet121(pretrained=False)
+num_features = model.classifier.in_features
+model.classifier = torch.nn.Linear(num_features, 2)  # 2 classes: Normal, TB
+model.load_state_dict(torch.load("tb_detector_densenet121.pth", map_location=device))
+model.to(device)
+model.eval()
+
+# --- Image preprocessing ---
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406],
+                         [0.229, 0.224, 0.225])
+])
+
+def load_image(image):
+    image = image.convert('RGB')
+    image = transform(image).unsqueeze(0)  # add batch dimension
+    return image.to(device)
+
+# --- Prediction function ---
+def predict(image):
+    image = load_image(image)
+    with torch.no_grad():
+        outputs = model(image)
+        probs = torch.softmax(outputs, dim=1)
+        pred_class = outputs.argmax(1).item()
+    
+    classes = ['Normal', 'Tuberculosis']
+    return classes[pred_class], probs[0][pred_class].item()
+
+# --- Streamlit UI ---
+st.title("💻 TB Chest X-ray Detector")
+st.write("Upload a chest X-ray image and get a prediction for Tuberculosis.")
+
+uploaded_file = st.file_uploader("Choose an X-ray image...", type=["jpg", "png", "jpeg"])
+
+if uploaded_file is not None:
+    image = Image.open(uploaded_file)
+    st.image(image, caption='Uploaded Image', use_column_width=True)
+    
+    pred_class, confidence = predict(image)
+    st.write(f"**Prediction:** {pred_class}")
+    st.write(f"**Confidence:** {confidence:.4f}")
