@@ -1,4 +1,5 @@
 # tb_app.py
+import os
 import streamlit as st
 import torch
 from torchvision import models, transforms
@@ -11,7 +12,8 @@ device = torch.device("cpu")  # change to "cuda" if GPU available
 model = models.densenet121(pretrained=False)
 num_features = model.classifier.in_features
 model.classifier = torch.nn.Linear(num_features, 2)  # 2 classes: Normal, TB
-model.load_state_dict(torch.load("tb_detector_densenet121.pth", map_location=device))
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "tb_detector_densenet121.pth")
+model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
 model.to(device)
 model.eval()
 
